@@ -202,6 +202,38 @@ function config_install_default_config($module, $config_name = NULL) {
 }
 
 /**
+ * Adds new default config options supplied by a module to the live config
+ * directory.
+ *
+ * @param string $module
+ *   The name of the module we are installing.
+ * @param string|NULL $config_name
+ *   (optional) If wanting to copy just a single configuration file from the
+ *   module, specify the configuration file name without the extension.
+ */
+function config_update_default_config($module, $config_name = NULL) {
+  $module_config_dir = backdrop_get_path('module', $module) . '/config';
+  $storage = new ConfigFileStorage($module_config_dir);
+  if (is_dir(backdrop_get_path('module', $module) . '/config')) {
+    $files = glob($module_config_dir . '/' . '*.json');
+    foreach ($files as $file) {
+      // Load config data into the active store and write it out to the
+      // file system in the Backdrop config directory. Note the config name
+      // needs to be the same as the file name WITHOUT the extension.
+      $parts = explode('/', $file);
+      $file = array_pop($parts);
+      $file_config_name = str_replace('.json', '', $file);
+      if (is_null($config_name) || $file_config_name === $config_name) {
+        $data = $storage->read($file_config_name);
+        $config = config($file_config_name);
+        $config->mergeDefaultData($data);
+        $config->save();
+      }
+    }
+  }
+}
+
+/**
  * Uninstall all the configuration provided by a module.
  */
 function config_uninstall_config($module, $config_name = NULL) {
@@ -285,7 +317,7 @@ class Config {
    *
    * @var array
    */
-  protected $data;
+  protected $data = array();
 
   /**
    * The state of validation on this object.
@@ -507,6 +539,22 @@ class Config {
    */
   public function setData(array $data) {
     $this->replaceData($data);
+    // A load would destroy the data just set (for example on import).
+    $this->isLoaded = TRUE;
+    return $this;
+  }
+
+  /**
+   * Merge new defaults with this configuration object.
+   *
+   * @param array $data
+   *   The new default configuration data.
+   *
+   * @return Config
+   *   The configuration object.
+   */
+  public function mergeDefaultData(array $data) {
+    $this->replaceData($this->data + $data);
     // A load would destroy the data just set (for example on import).
     $this->isLoaded = TRUE;
     return $this;
@@ -837,6 +885,17 @@ interface ConfigStorageInterface {
    */
   public function deleteAll($prefix = '');
 
+  /**
+   * Generate a hash of the current configuration data.
+   *
+   * This function supports any algorithm string supported by the PHP hash()
+   * function.
+   *
+   * @param  string $algo the hashing algorithm to use. Defaults to 'sha256'.
+   *
+   * @return string
+   */
+  public function hash($algo = 'sha256') {
 }
 
 /**
@@ -1016,5 +1075,15 @@ class ConfigFileStorage implements ConfigStorageInterface {
     }
 
     return $success;
+  }
+
+ /**
+  * {@inheritdoc}
+  */
+  public function hash($algo = 'sha1') {
+    $subject_data = $this->data;
+    unset($subject_data['_hash']);
+    $this->data['_hash'][$hash] = hash($algo, serialize($subject_data));
+    return $this->hash['_hash'][$hash];
   }
 }
